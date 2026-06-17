@@ -1,11 +1,41 @@
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 build/
 dist/
 .venv/
+venv/
+.python-version
+
+# Tooling
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
+.tox/
+
+# Editors / IDEs
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains (PyCharm, IntelliJ, etc.)
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Vim / Emacs / Sublime
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Direnv / asdf / pyenv
+.envrc
