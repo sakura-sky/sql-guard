@@ -46,6 +46,24 @@ if decision.denied:
 
 Every check is a `Rule` you can replace or compose with.
 
+### The cost-cap rule in detail
+
+Three independent thresholds bound any single query:
+
+| Threshold | Default | Outcome |
+|-----------|---------|---------|
+| `max_cost_usd_auto` | $0.10 | Auto-execute below; ask-confirmation above. |
+| `max_cost_usd_hard` | $20.00 | Refuse even with user confirmation. |
+| `max_bytes_billed` | 10 GiB | Hard byte cap. Bypasses the cost model so a pricing-model bug can't paper over an unbounded scan. |
+
+The cost model is a `Protocol` — `BigQueryOnDemandCost($5/TiB)` is the
+default; `FlatRateCost(usd_per_byte=...)` and user-supplied implementations
+(Snowflake credits, Redshift node-hours) plug straight in. Per-warehouse
+billing models stay accurate without forking.
+
+Plus a dry-run-only mode where the guard runs but never lets execution
+through — useful for sandboxes or onboarding a new tenant.
+
 ## What it deliberately does not do
 
 - It does not call BigQuery / Snowflake / anything. Dry-runs are the caller's
