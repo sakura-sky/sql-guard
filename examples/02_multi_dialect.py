@@ -18,8 +18,7 @@ def main() -> None:
         ),
         (
             "snowflake",
-            "SELECT order_id FROM analytics.orders "
-            "QUALIFY ROW_NUMBER() OVER (ORDER BY 1) = 1",
+            "SELECT order_id FROM analytics.orders QUALIFY ROW_NUMBER() OVER (ORDER BY 1) = 1",
         ),
         (
             "postgres",

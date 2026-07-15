@@ -1,7 +1,7 @@
 """Minimal example: guard a single BigQuery SQL string.
 
-    $ pip install sql-guard
-    $ python 01_minimal.py
+$ pip install sql-guard
+$ python 01_minimal.py
 """
 
 from __future__ import annotations
@@ -24,8 +24,7 @@ def main() -> None:
 
     # Safe query — passes static checks, awaiting a dry-run cost figure.
     decision = guard.evaluate_static(
-        "SELECT customer_id, SUM(total) FROM `my-project.analytics.orders` "
-        "GROUP BY customer_id",
+        "SELECT customer_id, SUM(total) FROM `my-project.analytics.orders` GROUP BY customer_id",
     )
     print("safe query  :", decision.outcome.value, "—", decision.reason)
 
