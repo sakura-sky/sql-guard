@@ -26,6 +26,7 @@ warehouses can supply their own (Snowflake credits, Redshift node-hours, …).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -319,13 +320,10 @@ class AllowedTablesRule:
         cfg = ctx.config
         if not cfg.enforce_allowed_tables or not cfg.allowed_tables:
             return None
-        offenders = sorted(
-            t for t in ctx.referenced_tables if t.lower() not in cfg.allowed_tables
-        )
+        offenders = sorted(t for t in ctx.referenced_tables if t.lower() not in cfg.allowed_tables)
         if offenders:
             return _deny(
-                "Query references tables outside the allowlist: "
-                f"{', '.join(offenders)}.",
+                f"Query references tables outside the allowlist: {', '.join(offenders)}.",
                 referenced_tables=tuple(sorted(ctx.referenced_tables)),
             )
         return None
@@ -375,9 +373,7 @@ class SqlGuard:
         rules: Sequence[Rule] | None = None,
     ) -> None:
         self._config = config
-        self._rules: tuple[Rule, ...] = tuple(
-            rules if rules is not None else default_rules(config)
-        )
+        self._rules: tuple[Rule, ...] = tuple(rules if rules is not None else default_rules(config))
 
     # ------------------------------------------------------------------
     # Public API
@@ -460,17 +456,22 @@ class SqlGuard:
 
         if cost_usd > self._config.max_cost_usd_hard:
             return _deny(
-                f"Estimated cost ${cost_usd:.2f} exceeds the hard cap of "
-                f"${self._config.max_cost_usd_hard:.2f}.",
+                f"Estimated cost {format_cost(cost_usd)} exceeds the hard cap of "
+                f"{format_cost(self._config.max_cost_usd_hard)}.",
                 cost_usd=cost_usd,
                 bytes_processed=bytes_processed,
                 referenced_tables=referenced_tables,
             )
 
+        # NOTE: `<=` means a query costing *exactly* the threshold is auto-run.
+        # Setting `max_cost_usd_auto=0.00` will still auto-allow any query
+        # whose dry-run returns literal 0 bytes (cached / metadata-only).
+        # To force confirm-on-every-query for demos, set a negative threshold
+        # (e.g. -0.01) so no non-negative cost can ever satisfy `<=`.
         if cost_usd <= self._config.max_cost_usd_auto:
             return GuardDecision(
                 outcome=GuardOutcome.ALLOW,
-                reason=f"Estimated cost ${cost_usd:.4f} is within the auto-run threshold.",
+                reason=f"Estimated cost {format_cost(cost_usd)} is within the auto-run threshold.",
                 cost_usd=cost_usd,
                 bytes_processed=bytes_processed,
                 referenced_tables=referenced_tables,
@@ -479,8 +480,8 @@ class SqlGuard:
         return GuardDecision(
             outcome=GuardOutcome.CONFIRM,
             reason=(
-                f"Estimated cost ${cost_usd:.2f} requires user confirmation "
-                f"(auto threshold ${self._config.max_cost_usd_auto:.2f})."
+                f"Estimated cost {format_cost(cost_usd)} requires user confirmation "
+                f"(auto threshold {format_cost(self._config.max_cost_usd_auto)})."
             ),
             cost_usd=cost_usd,
             bytes_processed=bytes_processed,
@@ -520,11 +521,7 @@ def outer_selects(statement: exp.Expression) -> list[exp.Select]:
     if isinstance(statement, exp.Select):
         return [statement]
     if isinstance(statement, exp.Union | exp.Except | exp.Intersect):
-        return [
-            s
-            for arm in (statement.left, statement.right)
-            for s in outer_selects(arm)
-        ]
+        return [s for arm in (statement.left, statement.right) for s in outer_selects(arm)]
     return []
 
 
@@ -581,6 +578,28 @@ def format_bytes(num_bytes: int) -> str:
     return f"{num_bytes / 1024**4:.2f} TiB"
 
 
+def format_cost(cost_usd: float) -> str:
+    """Human-readable USD cost for guard reason messages.
+
+    Uses 2 decimals for costs >= 1 cent. For sub-cent costs, picks the number
+    of decimals dynamically so at least two significant figures always show —
+    a real BigQuery dry-run cost of $0.00000019 renders as ``$0.00000019``
+    rather than the ``$0.00`` a flat ``%.2f`` would produce. Negative costs
+    (used as a sentinel by operators who want the guard's confirm gate to
+    trip on every query — see the ``CostCapRule`` note) render with the sign
+    outside the dollar sign, e.g. ``-$0.01``.
+    """
+    sign = "-" if cost_usd < 0 else ""
+    magnitude = abs(cost_usd)
+    if magnitude == 0:
+        return "$0.00"
+    if magnitude >= 0.01:
+        return f"{sign}${magnitude:.2f}"
+    # Sub-cent: enough decimals for at least two significant figures.
+    decimals = 1 - int(math.floor(math.log10(magnitude)))
+    return f"{sign}${magnitude:.{decimals}f}"
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
@@ -630,9 +649,7 @@ def _projection_names(projection: exp.Expression) -> list[str]:
         inner = target.this
         if isinstance(inner, exp.Select):
             return [
-                name
-                for inner_proj in inner.expressions
-                for name in _projection_names(inner_proj)
+                name for inner_proj in inner.expressions for name in _projection_names(inner_proj)
             ]
         # Non-SELECT inside a subquery — fall through to conservative walking.
 

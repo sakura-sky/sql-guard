@@ -13,7 +13,7 @@ Public API:
         CostModel, BigQueryOnDemandCost, FlatRateCost,
         # AST helpers for custom rules
         outer_selects, outermost_projection_names, referenced_tables,
-        has_top_level_select_star, format_bytes,
+        has_top_level_select_star, format_bytes, format_cost,
     )
 """
 
@@ -38,13 +38,14 @@ from .sql_guard import (
     SqlGuardConfig,
     default_rules,
     format_bytes,
+    format_cost,
     has_top_level_select_star,
     outer_selects,
     outermost_projection_names,
     referenced_tables,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "AllowedTablesRule",
@@ -66,6 +67,7 @@ __all__ = [
     "__version__",
     "default_rules",
     "format_bytes",
+    "format_cost",
     "has_top_level_select_star",
     "outer_selects",
     "outermost_projection_names",

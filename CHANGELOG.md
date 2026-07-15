@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-06-19
+
+### Added
+- `format_cost(cost_usd)` helper exported from the top-level package.
+  Renders sub-cent BigQuery dry-run costs with enough precision to show at
+  least two significant figures (`$0.00000019` instead of `$0.00`), keeps
+  two decimals for cent-plus costs, and prints negative values as
+  `-$0.01` for use as a demo-mode auto threshold.
+- `CostCapRule` reason strings (allow / confirm / hard-deny) now render
+  costs via `format_cost`, so the trace panel and logs no longer round
+  sub-cent estimates to `$0.00`.
+
+### Documentation
+- Inline comment on the auto-threshold branch of `CostCapRule` documents
+  the `cost_usd <= threshold` semantics and the negative-threshold trick
+  for forcing confirm-on-every-query during demos.
+
 ## [0.1.0] — 2026-06-03
 
 ### Added
@@ -34,5 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SELECT * EXCEPT(...)` is rejected — the guard cannot prove the EXCEPT
   list enumerates every PII column.
 
-[Unreleased]: https://github.com/seagrass/sql-guard/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/seagrass/sql-guard/releases/tag/v0.1.0
+[Unreleased]: https://github.com/sakura-sky/sql-guard/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/sakura-sky/sql-guard/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/sakura-sky/sql-guard/releases/tag/v0.1.0

@@ -9,10 +9,9 @@ reports as P0.
 
 **Please do not file public issues for security bugs.** Use one of:
 
-- Email: `security@<your-org>.example` (replace with the maintainer's address
-  before publishing).
+- Email: `security@sakurasky.com`.
 - GitHub Security Advisory: open a draft advisory at
-  <https://github.com/seagrass/sql-guard/security/advisories/new>.
+  <https://github.com/sakura-sky/sql-guard/security/advisories/new>.
 
 Include:
 

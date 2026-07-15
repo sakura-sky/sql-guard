@@ -1,11 +1,11 @@
 [project]
 name = "sql-guard"
-version = "0.1.0"
+version = "0.1.1"
 description = "Deterministic policy engine for LLM-generated SQL: SELECT-only, PII column denylist, table allowlist, cost cap. Multi-dialect via sqlglot (BigQuery, Snowflake, Postgres, Trino, …)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Seagrass Engineering" }]
+authors = [{ name = "Sakura Sky Engineering" }]
 keywords = [
     "sql",
     "llm",
@@ -51,9 +51,9 @@ dev = [
 ]
 
 [project.urls]
-Source = "https://github.com/seagrass/sql-guard"
-Issues = "https://github.com/seagrass/sql-guard/issues"
-Changelog = "https://github.com/seagrass/sql-guard/blob/main/CHANGELOG.md"
+Source = "https://github.com/sakura-sky/sql-guard"
+Issues = "https://github.com/sakura-sky/sql-guard/issues"
+Changelog = "https://github.com/sakura-sky/sql-guard/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling>=1.27"]

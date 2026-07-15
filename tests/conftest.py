@@ -21,8 +21,6 @@ def pii_denylist() -> PiiDenylist:
     return PiiDenylist.from_mapping(
         {
             "columns": [
-                "drc_email",
-                "drc_mobile",
                 "email",
                 "email_alt",
                 "phone_number",
@@ -42,16 +40,15 @@ def pii_denylist() -> PiiDenylist:
 def allowed_tables() -> frozenset[str]:
     """Three fully-qualified tables used by the test suite.
 
-    These remain to keep the existing test cases (which embed these names in
-    sample SQL) passing without rewriting every test. They are not
-    meaningful to consumers of the package.
+    Synthetic ``example-project`` names — not tied to any real warehouse. The
+    test SQL embeds these same names.
     """
     return frozenset(
         t.lower()
         for t in [
-            "agentspaceseagrass.demo_data.ocv",
-            "prod-loyalty-silver-seagrass.IDENTITY.matched_data",
-            "prod-loyalty-silver-seagrass.TRANSACTIONS.join_matched_pii_transactions_tb",
+            "example-project.analytics.customers",
+            "example-project.analytics.identity",
+            "example-project.analytics.transactions",
         ]
     )
 

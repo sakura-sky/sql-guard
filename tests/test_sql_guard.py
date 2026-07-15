@@ -1,6 +1,6 @@
 """Unit tests for the deterministic SQL guard.
 
-These tests cover the rules called out in the PDF test cases:
+These tests exercise the guard's rules with synthetic ``example-project`` data:
 
 * Positive Q1-Q4 SQL should pass the static checks.
 * Negative N1 ("emails and mobiles") must be DENY.
@@ -15,7 +15,7 @@ import pytest
 from sql_guard import GuardOutcome, SqlGuard
 
 # ---------------------------------------------------------------------------
-# Positive cases from the PDF
+# Positive cases
 # ---------------------------------------------------------------------------
 
 
@@ -23,65 +23,65 @@ _Q1 = """
 WITH base AS (
     SELECT
         uid,
-        LOWER(TRIM(DRC_Email)) AS drc_email_norm,
-        RIGHT(REGEXP_REPLACE(DRC_Mobile, r'\\D', ''), 10) AS drc_mobile_norm,
-        SevenR_Emails,
-        SevenR_Mobiles,
-        MeU_Emails,
-        MeU_Mobiles
-    FROM `agentspaceseagrass.demo_data.ocv`
+        LOWER(TRIM(email)) AS email_norm,
+        RIGHT(REGEXP_REPLACE(mobile, r'\\D', ''), 10) AS mobile_norm,
+        platform_a_emails,
+        platform_a_mobiles,
+        platform_b_emails,
+        platform_b_mobiles
+    FROM `example-project.analytics.customers`
 )
 SELECT
-    COUNTIF(drc_email_norm IS NOT NULL OR drc_mobile_norm IS NOT NULL) AS drc_member_count,
+    COUNTIF(email_norm IS NOT NULL OR mobile_norm IS NOT NULL) AS member_count,
     COUNTIF(
-        (drc_email_norm IS NOT NULL AND EXISTS (
-            SELECT 1 FROM UNNEST(SevenR_Emails) e
-            WHERE LOWER(TRIM(e)) = drc_email_norm
+        (email_norm IS NOT NULL AND EXISTS (
+            SELECT 1 FROM UNNEST(platform_a_emails) e
+            WHERE LOWER(TRIM(e)) = email_norm
         ))
-        OR (drc_mobile_norm IS NOT NULL AND EXISTS (
-            SELECT 1 FROM UNNEST(SevenR_Mobiles) m
-            WHERE RIGHT(REGEXP_REPLACE(m, r'\\D', ''), 10) = drc_mobile_norm
+        OR (mobile_norm IS NOT NULL AND EXISTS (
+            SELECT 1 FROM UNNEST(platform_a_mobiles) m
+            WHERE RIGHT(REGEXP_REPLACE(m, r'\\D', ''), 10) = mobile_norm
         ))
-    ) AS drc_in_sevenrooms,
+    ) AS in_platform_a,
     COUNTIF(
-        (drc_email_norm IS NOT NULL AND EXISTS (
-            SELECT 1 FROM UNNEST(MeU_Emails) e
-            WHERE LOWER(TRIM(e)) = drc_email_norm
+        (email_norm IS NOT NULL AND EXISTS (
+            SELECT 1 FROM UNNEST(platform_b_emails) e
+            WHERE LOWER(TRIM(e)) = email_norm
         ))
-        OR (drc_mobile_norm IS NOT NULL AND EXISTS (
-            SELECT 1 FROM UNNEST(MeU_Mobiles) m
-            WHERE RIGHT(REGEXP_REPLACE(m, r'\\D', ''), 10) = drc_mobile_norm
+        OR (mobile_norm IS NOT NULL AND EXISTS (
+            SELECT 1 FROM UNNEST(platform_b_mobiles) m
+            WHERE RIGHT(REGEXP_REPLACE(m, r'\\D', ''), 10) = mobile_norm
         ))
-    ) AS drc_in_meu
+    ) AS in_platform_b
 FROM base
 """
 
 
 _Q2 = """
-SELECT DRC_Tier, COUNT(*) AS customer_count
-FROM `prod-loyalty-silver-seagrass.TRANSACTIONS.join_matched_pii_transactions_tb`
+SELECT tier, COUNT(*) AS customer_count
+FROM `example-project.analytics.transactions`
 WHERE lifetime_spend > 5000
-GROUP BY DRC_Tier
+GROUP BY tier
 """
 
 
 _Q3 = """
-SELECT DRC_Tier, COUNT(*) AS lapsed_count
-FROM `prod-loyalty-silver-seagrass.TRANSACTIONS.join_matched_pii_transactions_tb`
+SELECT tier, COUNT(*) AS lapsed_count
+FROM `example-project.analytics.transactions`
 WHERE overall_last_transaction_date < DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
    OR overall_last_transaction_date IS NULL
-GROUP BY DRC_Tier
+GROUP BY tier
 """
 
 
 _Q4 = """
 SELECT
-    DRC_Tier,
+    tier,
     COUNT(uid) AS customer_count,
-    AVG(Lifetime_Spend) AS average_spend,
+    AVG(lifetime_spend) AS average_spend,
     AVG(lifetime_transaction_count) AS average_visit_frequency
-FROM `prod-loyalty-silver-seagrass.TRANSACTIONS.join_matched_pii_transactions_tb`
-GROUP BY DRC_Tier
+FROM `example-project.analytics.transactions`
+GROUP BY tier
 """
 
 
@@ -99,14 +99,14 @@ def test_positive_cases_pass_static(sql_guard: SqlGuard, name: str, sql: str) ->
 
 
 # ---------------------------------------------------------------------------
-# Negative cases from the PDF
+# Negative cases
 # ---------------------------------------------------------------------------
 
 
 def test_n1_pii_query_is_denied(sql_guard: SqlGuard) -> None:
     sql = """
-        SELECT DRC_Email, DRC_Mobile
-        FROM `agentspaceseagrass.demo_data.ocv`
+        SELECT email, mobile
+        FROM `example-project.analytics.customers`
         WHERE lifetime_spend > 5000
     """
     decision = sql_guard.evaluate_static(sql)
@@ -116,10 +116,7 @@ def test_n1_pii_query_is_denied(sql_guard: SqlGuard) -> None:
 
 
 def test_n2_select_star_transactions_is_denied(sql_guard: SqlGuard) -> None:
-    sql = (
-        "SELECT * "
-        "FROM `prod-loyalty-silver-seagrass.TRANSACTIONS.join_matched_pii_transactions_tb`"
-    )
+    sql = "SELECT * FROM `example-project.analytics.transactions`"
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is GuardOutcome.DENY
 
@@ -131,26 +128,23 @@ def test_select_star_except_is_denied(sql_guard: SqlGuard) -> None:
     prove the EXCEPT list is exhaustive — a future PII column added to the
     table would silently start leaking. Reject it; require explicit columns.
     """
-    sql = (
-        "SELECT * EXCEPT(DRC_Email, DRC_Mobile) "
-        "FROM `agentspaceseagrass.demo_data.ocv`"
-    )
+    sql = "SELECT * EXCEPT(email, mobile) FROM `example-project.analytics.customers`"
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is GuardOutcome.DENY
     assert "*" in decision.reason
 
 
 def test_aliased_pii_column_is_denied(sql_guard: SqlGuard) -> None:
-    """`SELECT DRC_Email AS x` must still flag DRC_Email."""
-    sql = "SELECT DRC_Email AS x FROM `agentspaceseagrass.demo_data.ocv`"
+    """`SELECT email AS x` must still flag email."""
+    sql = "SELECT email AS x FROM `example-project.analytics.customers`"
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is GuardOutcome.DENY
     assert any("email" in c.lower() for c in decision.pii_columns)
 
 
 def test_pii_in_function_call_is_denied(sql_guard: SqlGuard) -> None:
-    """`SELECT LOWER(DRC_Email)` reaches through the function to flag PII."""
-    sql = "SELECT LOWER(DRC_Email) AS x FROM `agentspaceseagrass.demo_data.ocv`"
+    """`SELECT LOWER(email)` reaches through the function to flag PII."""
+    sql = "SELECT LOWER(email) AS x FROM `example-project.analytics.customers`"
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is GuardOutcome.DENY
 
@@ -158,9 +152,9 @@ def test_pii_in_function_call_is_denied(sql_guard: SqlGuard) -> None:
 def test_pii_in_union_right_arm_is_denied(sql_guard: SqlGuard) -> None:
     """A clean left arm cannot mask a PII projection in the right arm."""
     sql = (
-        "SELECT uid FROM `agentspaceseagrass.demo_data.ocv` "
+        "SELECT uid FROM `example-project.analytics.customers` "
         "UNION ALL "
-        "SELECT DRC_Email FROM `agentspaceseagrass.demo_data.ocv`"
+        "SELECT email FROM `example-project.analytics.customers`"
     )
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is GuardOutcome.DENY
@@ -168,7 +162,7 @@ def test_pii_in_union_right_arm_is_denied(sql_guard: SqlGuard) -> None:
 
 def test_select_count_star_is_allowed(sql_guard: SqlGuard) -> None:
     """`SELECT COUNT(*)` is a scalar aggregate, not a projection of `*`."""
-    sql = "SELECT COUNT(*) FROM `agentspaceseagrass.demo_data.ocv`"
+    sql = "SELECT COUNT(*) FROM `example-project.analytics.customers`"
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is not GuardOutcome.DENY
 
@@ -177,16 +171,16 @@ def test_pii_in_subquery_where_is_allowed(sql_guard: SqlGuard) -> None:
     """A scalar-returning subquery that *consumes* PII in WHERE is fine.
 
     The subquery emits a count, not the PII value. The guard must not flag
-    DRC_Email referenced inside the subquery's WHERE clause.
+    email referenced inside the subquery's WHERE clause.
     """
     sql = """
     SELECT
-      (SELECT COUNT(*) FROM `prod-loyalty-silver-seagrass.IDENTITY.matched_data`
-       WHERE DRC_Email IS NOT NULL AND ARRAY_LENGTH(SevenR_Emails) > 0
-      ) AS sevenrooms_count,
-      (SELECT COUNT(*) FROM `prod-loyalty-silver-seagrass.IDENTITY.matched_data`
-       WHERE DRC_Email IS NOT NULL AND ARRAY_LENGTH(MeU_Emails) > 0
-      ) AS meu_count
+      (SELECT COUNT(*) FROM `example-project.analytics.identity`
+       WHERE email IS NOT NULL AND ARRAY_LENGTH(platform_a_emails) > 0
+      ) AS platform_a_count,
+      (SELECT COUNT(*) FROM `example-project.analytics.identity`
+       WHERE email IS NOT NULL AND ARRAY_LENGTH(platform_b_emails) > 0
+      ) AS platform_b_count
     """
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is not GuardOutcome.DENY, decision.reason
@@ -194,10 +188,7 @@ def test_pii_in_subquery_where_is_allowed(sql_guard: SqlGuard) -> None:
 
 def test_pii_actually_projected_by_subquery_is_denied(sql_guard: SqlGuard) -> None:
     """If a subquery *projects* PII, the guard must still catch it."""
-    sql = (
-        "SELECT (SELECT DRC_Email "
-        "FROM `prod-loyalty-silver-seagrass.IDENTITY.matched_data` LIMIT 1) AS leaked"
-    )
+    sql = "SELECT (SELECT email FROM `example-project.analytics.identity` LIMIT 1) AS leaked"
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is GuardOutcome.DENY
     assert any("email" in c.lower() for c in decision.pii_columns)
@@ -207,8 +198,8 @@ def test_pii_in_where_of_outer_query_is_allowed(sql_guard: SqlGuard) -> None:
     """Using PII in a WHERE filter while projecting non-PII columns is fine."""
     sql = (
         "SELECT uid, COUNT(*) AS n "
-        "FROM `prod-loyalty-silver-seagrass.IDENTITY.matched_data` "
-        "WHERE DRC_Email IS NOT NULL "
+        "FROM `example-project.analytics.identity` "
+        "WHERE email IS NOT NULL "
         "GROUP BY uid"
     )
     decision = sql_guard.evaluate_static(sql)
@@ -223,11 +214,11 @@ def test_pii_in_where_of_outer_query_is_allowed(sql_guard: SqlGuard) -> None:
 @pytest.mark.parametrize(
     "sql",
     [
-        "INSERT INTO `agentspaceseagrass.demo_data.ocv` (uid) VALUES ('x')",
-        "DELETE FROM `agentspaceseagrass.demo_data.ocv` WHERE uid = 'x'",
-        "UPDATE `agentspaceseagrass.demo_data.ocv` SET DRC_Tier = 'VIP'",
-        "CREATE TABLE `agentspaceseagrass.demo_data.foo` (x INT64)",
-        "DROP TABLE `agentspaceseagrass.demo_data.foo`",
+        "INSERT INTO `example-project.analytics.customers` (uid) VALUES ('x')",
+        "DELETE FROM `example-project.analytics.customers` WHERE uid = 'x'",
+        "UPDATE `example-project.analytics.customers` SET tier = 'VIP'",
+        "CREATE TABLE `example-project.analytics.foo` (x INT64)",
+        "DROP TABLE `example-project.analytics.foo`",
     ],
 )
 def test_dml_and_ddl_are_denied(sql_guard: SqlGuard, sql: str) -> None:
@@ -236,10 +227,7 @@ def test_dml_and_ddl_are_denied(sql_guard: SqlGuard, sql: str) -> None:
 
 
 def test_multi_statement_script_is_denied(sql_guard: SqlGuard) -> None:
-    sql = (
-        "SELECT 1; "
-        "SELECT 2;"
-    )
+    sql = "SELECT 1; SELECT 2;"
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is GuardOutcome.DENY
 
@@ -267,7 +255,7 @@ def test_query_outside_allowlist_is_denied(sql_guard: SqlGuard) -> None:
 
 
 def test_query_on_allowlisted_table_passes(sql_guard: SqlGuard) -> None:
-    sql = "SELECT DRC_Tier FROM `agentspaceseagrass.demo_data.ocv`"
+    sql = "SELECT tier FROM `example-project.analytics.customers`"
     decision = sql_guard.evaluate_static(sql)
     assert decision.outcome is GuardOutcome.CONFIRM
 
@@ -285,13 +273,11 @@ def test_cost_below_auto_threshold_allows(sql_guard: SqlGuard) -> None:
 
 
 def test_cost_between_auto_and_hard_caps_asks_to_confirm(sql_guard: SqlGuard) -> None:
-    # 50 GB processed: ~$0.24 — above $0.10 auto, below $20 hard.
-    # But the 10 GiB bytes-billed cap kicks in first, so 5 GiB instead:
-    bytes_5gib = 5 * 1024**3  # ~$0.025 -- under auto. Use higher.
-    # Choose a size that lands between caps: ~$1.00 → 200 GB.
-    # Bytes-billed cap is 10 GiB so we need to also raise it for this test
-    # via a one-off guard instance.
+    # Land the cost between the $0.10 auto and $20 hard thresholds (~$1.00 →
+    # 200 GB). The default 10 GiB bytes-billed cap would DENY first, so this
+    # one-off guard raises it to 1 TiB.
     from sql_guard import PiiDenylist, SqlGuardConfig
+
     custom = SqlGuard(
         SqlGuardConfig.from_settings(
             pii_denylist=PiiDenylist.from_mapping({"columns": [], "substrings": []}),
@@ -305,7 +291,6 @@ def test_cost_between_auto_and_hard_caps_asks_to_confirm(sql_guard: SqlGuard) ->
     decision = custom.evaluate_cost(bytes_processed=200 * 1024**3)
     assert decision.outcome is GuardOutcome.CONFIRM
     assert decision.auto_execute is False
-    _ = bytes_5gib  # appease ruff
 
 
 def test_cost_above_hard_cap_denies() -> None:
@@ -335,7 +320,97 @@ def test_bytes_billed_cap_denies(sql_guard: SqlGuard) -> None:
 
 def test_evaluate_combines_static_and_cost(sql_guard: SqlGuard) -> None:
     decision = sql_guard.evaluate(
-        "SELECT DRC_Tier FROM `agentspaceseagrass.demo_data.ocv`",
+        "SELECT tier FROM `example-project.analytics.customers`",
         bytes_processed=1024 * 1024,
     )
     assert decision.outcome is GuardOutcome.ALLOW
+
+
+# ---------------------------------------------------------------------------
+# Cost formatter
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cost", "expected"),
+    [
+        # Exact zero — collapse to two decimals.
+        (0.0, "$0.00"),
+        # Sub-cent costs — dynamic precision, always at least two sig figs.
+        # A real BigQuery dry-run against a small table lands here; the old
+        # `%.2f` formatter rendered this as "$0.00" which lost the story.
+        (0.00000019, "$0.00000019"),
+        (0.0000005, "$0.00000050"),
+        (0.00001, "$0.000010"),
+        (0.0001, "$0.00010"),
+        (0.005, "$0.0050"),
+        (0.0095, "$0.0095"),
+        # Cent and above — two decimals is enough.
+        (0.01, "$0.01"),
+        (0.10, "$0.10"),
+        (1.23, "$1.23"),
+        (20.00, "$20.00"),
+        # Negative values — used as a sentinel to force confirm-on-every-query.
+        # Sign goes outside the dollar to read like a normal currency string.
+        (-0.01, "-$0.01"),
+        (-0.10, "-$0.10"),
+    ],
+)
+def test_format_cost_precision(cost: float, expected: str) -> None:
+    from sql_guard import format_cost
+
+    assert format_cost(cost) == expected
+
+
+def test_confirm_reason_shows_sub_cent_cost() -> None:
+    """The reason string must expose sub-cent costs, not round them to $0.00.
+
+    A BigQuery dry-run on a small table returns bytes → a cost well under a
+    cent. Users need to see the actual number in the trace panel; ``$0.00``
+    hides whether the guard even ran the cost model.
+    """
+    from sql_guard import PiiDenylist, SqlGuardConfig
+
+    guard = SqlGuard(
+        SqlGuardConfig.from_settings(
+            pii_denylist=PiiDenylist.from_mapping({"columns": [], "substrings": []}),
+            allowed_tables=[],
+            max_cost_usd_auto=-0.01,  # force CONFIRM regardless of cost
+            max_cost_usd_hard=20.00,
+            max_bytes_billed=1024**4,
+            enforce_allowed_tables=False,
+        ),
+    )
+    # ~10 MiB → ~$0.00005 at $5/TiB — well under a cent, well under the hard cap.
+    decision = guard.evaluate_cost(bytes_processed=10 * 1024 * 1024)
+    assert decision.outcome is GuardOutcome.CONFIRM
+    assert "$0.00" not in decision.reason.split(" requires")[0], (
+        f"reason should expose sub-cent precision, got: {decision.reason!r}"
+    )
+    assert decision.cost_usd is not None
+    assert 0 < decision.cost_usd < 0.01
+
+
+def test_negative_auto_threshold_forces_confirm_for_zero_cost() -> None:
+    """A negative auto threshold guarantees confirm even for a cached query.
+
+    Documents the demo-mode trick: setting ``max_cost_usd_auto=-0.01`` makes
+    no non-negative cost satisfy ``cost_usd <= threshold``, so every query
+    lands on the CONFIRM branch — including cached queries that report
+    ``bytes_processed=0``.
+    """
+    from sql_guard import PiiDenylist, SqlGuardConfig
+
+    guard = SqlGuard(
+        SqlGuardConfig.from_settings(
+            pii_denylist=PiiDenylist.from_mapping({"columns": [], "substrings": []}),
+            allowed_tables=[],
+            max_cost_usd_auto=-0.01,
+            max_cost_usd_hard=20.00,
+            max_bytes_billed=10 * 1024**3,
+            enforce_allowed_tables=False,
+        ),
+    )
+    decision = guard.evaluate_cost(bytes_processed=0)
+    assert decision.outcome is GuardOutcome.CONFIRM
+    assert "-$0.01" in decision.reason

@@ -17,7 +17,7 @@ clarity and easy review over feature breadth.
 ## Setting up
 
 ```bash
-git clone https://github.com/seagrass/sql-guard
+git clone https://github.com/sakura-sky/sql-guard
 cd sql-guard
 uv venv --python 3.12
 source .venv/bin/activate
