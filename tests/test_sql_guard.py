@@ -369,7 +369,7 @@ def test_confirm_reason_shows_sub_cent_cost() -> None:
     cent. Users need to see the actual number in the trace panel; ``$0.00``
     hides whether the guard even ran the cost model.
     """
-    from sql_guard import PiiDenylist, SqlGuardConfig
+    from sql_guard import PiiDenylist, SqlGuardConfig, format_cost
 
     guard = SqlGuard(
         SqlGuardConfig.from_settings(
@@ -384,11 +384,14 @@ def test_confirm_reason_shows_sub_cent_cost() -> None:
     # ~10 MiB → ~$0.00005 at $5/TiB — well under a cent, well under the hard cap.
     decision = guard.evaluate_cost(bytes_processed=10 * 1024 * 1024)
     assert decision.outcome is GuardOutcome.CONFIRM
-    assert "$0.00" not in decision.reason.split(" requires")[0], (
-        f"reason should expose sub-cent precision, got: {decision.reason!r}"
-    )
     assert decision.cost_usd is not None
     assert 0 < decision.cost_usd < 0.01
+    # The reason must show the *precise* sub-cent cost, not round it to $0.00.
+    # (A naive ``"$0.00" not in reason`` check is wrong — "$0.000048" legitimately
+    # begins with "$0.00". Assert on the formatted value itself.)
+    shown = format_cost(decision.cost_usd)
+    assert shown != "$0.00", f"sub-cent cost rounded away in: {decision.reason!r}"
+    assert shown in decision.reason
 
 
 def test_negative_auto_threshold_forces_confirm_for_zero_cost() -> None:
