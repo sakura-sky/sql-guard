@@ -33,18 +33,103 @@ if decision.denied:
 
 1. **Single SELECT only.** DML, DDL, scripts, multi-statement payloads — all
    rejected. Even if buried in subqueries.
-2. **PII column denylist.** Projections that touch denylisted columns are
-   rejected. Catches aliased PII (`SELECT email AS x`), PII through transforms
-   (`SELECT LOWER(email)`), and the right arm of a `UNION ALL`.
-3. **No top-level `SELECT *`.** Bare `*`, `* EXCEPT(...)`, and `* REPLACE(...)`
-   are all rejected — the guard can't prove EXCEPT enumerates every PII column.
-4. **Table allowlist.** Only fully-qualified tables you approved can be
+2. **PII column denylist.** By default, *any reference* to a denylisted column
+   is rejected — in the select list, `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`
+   or a `JOIN` condition, at any nesting depth. Catches aliased PII
+   (`SELECT email AS x`), PII through transforms (`SELECT LOWER(email)`),
+   the right arm of a `UNION ALL`, and columns renamed inside a CTE or derived
+   table. See [PII modes](#pii-modes).
+3. **No `SELECT *` in any scope.** Bare `*`, `* EXCEPT(...)`, `* REPLACE(...)`
+   and qualified `t.*` are all rejected, inside CTEs and subqueries as well as
+   at the top level — the guard can't prove EXCEPT enumerates every PII column,
+   nor what `*` expands to. The check is a deep walk, so stars wrapped in a
+   function (`OBJECT_CONSTRUCT(*)`, `COLUMNS(*)`, `* APPLY(f)`) are caught too;
+   `COUNT(*)` is the deliberate exception.
+4. **Nothing whose columns the guard can't enumerate.** A bare table alias in a
+   value position (`SELECT c FROM tbl AS c`) returns the whole row as a struct,
+   and `NATURAL JOIN` joins on unknown shared columns. Both are rejected for the
+   same reason as `SELECT *`.
+5. **Table allowlist.** Only fully-qualified tables you approved can be
    referenced. CTE aliases are excluded.
-5. **Cost cap.** Given the bytes-processed figure from a dry-run, the guard
+6. **Cost cap.** Given the bytes-processed figure from a dry-run, the guard
    returns `allow` below your auto threshold, `confirm` in between, and `deny`
    above the hard cap or bytes-billed ceiling.
 
 Every check is a `Rule` you can replace or compose with.
+
+### PII modes
+
+`pii_mode` controls how far the denylist reaches.
+
+| Mode | Denies | Use when |
+|---|---|---|
+| `"reference"` (default) | Any reference to a denied column, in any clause and any scope. | The agent must not learn PII values at all. |
+| `"project"` | Only projections of denied columns — checked in every scope. | Predicate access to PII is a deliberate, accepted trade-off. |
+
+The default is the strict one because projection-only checking leaves the
+values reachable. A denied column in a `WHERE` clause never appears in the
+output, but the row count still answers a yes/no question about it:
+
+```sql
+-- Passes a projection-only guard. Returns 0 or non-zero.
+SELECT COUNT(*) FROM `p.d.orders` WHERE billing_city = 'Columbus'
+```
+
+Repeat with `LIKE 'a%'`, `> 'm'`, and so on, and the value falls out in a
+handful of queries. `GROUP BY`, `HAVING` and `ORDER BY` leak the same way.
+
+**The loosening path.** If your deployment genuinely needs to filter on PII —
+segmenting on a hashed identifier, say, or counting non-null contact rows —
+set `pii_mode="project"`:
+
+```python
+SqlGuardConfig.from_settings(..., pii_mode="project")
+```
+
+That re-permits denied columns in predicates while still rejecting every
+projection of them, in every scope. Prefer narrowing the denylist, or exposing
+a pre-masked warehouse view the denylist doesn't cover, before reaching for it.
+
+Note that "aggregate" is not a safe harbour in either mode. `MAX(email)`,
+`ARRAY_AGG(email)` and `STRING_AGG(email)` return real values and are rejected;
+only aggregates that reduce to a statistic (`COUNT`, `SUM`, `AVG`, `STDDEV`, …)
+are treated as PII-neutralising, and then only under `pii_mode="project"`.
+
+### What the denylist does not cover
+
+The guard matches **column names in the SQL text**. It has no schema, so:
+
+- **PII inside JSON / VARIANT / STRUCT payloads** is not covered.
+  `JSON_VALUE(payload, '$.email')` names only `payload`; the field name is a
+  string literal the engine resolves. The same applies to selecting a struct
+  column whole (`SELECT contact FROM t`) and to `UNNEST` aliases over an array
+  of structs (`SELECT s FROM t, UNNEST(t.contacts) AS s`) — both return every
+  field without naming one. **Denylist the containing column.**
+- **Re-identification through non-PII columns** is out of scope. If `uid` maps
+  1:1 to a person, blocking `email` does not prevent correlation with outside
+  data.
+- **Side channels** — row counts, dry-run byte counts and error messages carry
+  bits about denied values even when every direct reference is refused.
+
+These are limits of a parse-level guard, not bugs. Warehouse-side column
+security is the durable answer; `sql-guard` is defence in depth.
+
+### Scopes
+
+Denylist and star checks run against **every** `SELECT` scope — CTE bodies,
+derived tables, scalar and `IN` subqueries, and each arm of a set operation —
+matching on the underlying column names in the scope that names them. An alias
+therefore cannot launder a denied column:
+
+```sql
+-- Denied: the CTE scope still names billing_city.
+WITH c AS (SELECT billing_city AS city FROM `p.d.orders`)
+SELECT city FROM c
+```
+
+Checking only the outermost select list would see `city` and let it through.
+The same applies through derived tables, `UNION` arms, and multi-hop alias
+chains (`a AS (...) → b AS (...) → SELECT`).
 
 ### The cost-cap rule in detail
 
@@ -70,7 +155,8 @@ through — useful for sandboxes or onboarding a new tenant.
   job; pass `bytes_processed` to `evaluate_cost`. Keeps the guard testable
   without credentials and dialect-agnostic.
 - It does not introspect table schemas. If you say "this table is allowed,"
-  the guard takes your word for it.
+  the guard takes your word for it. This is why `SELECT *` is rejected
+  everywhere: without a schema the guard cannot enumerate what `*` returns.
 - It does not authorise the user. Identity, IAM, row-level security: not in
   scope. The guard is a *policy* layer, not a *permissions* layer.
 
@@ -159,7 +245,7 @@ pip install 'sql-guard[adk]'     # + Google ADK + BigQuery client for the
                                  #   FunctionTool integration
 ```
 
-Python 3.10+ supported.
+Python 3.11+ supported.
 
 ## License
 

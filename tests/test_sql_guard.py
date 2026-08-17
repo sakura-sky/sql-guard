@@ -2,10 +2,15 @@
 
 These tests exercise the guard's rules with synthetic ``example-project`` data:
 
-* Positive Q1-Q4 SQL should pass the static checks.
+* Positive Q2-Q4 SQL should pass the static checks.
+* Q1 (identity resolution over normalised email/mobile) is DENY as of 0.2.0 —
+  see :func:`test_q1_identity_resolution_is_denied` for why.
 * Negative N1 ("emails and mobiles") must be DENY.
 * Negative N2 ("all transactions") must be DENY (bare ``SELECT *``).
 * Cost-cap rules: dry-run bytes drive ALLOW / CONFIRM / DENY.
+
+Scope-bypass regressions (CTE / derived-table / UNION-arm aliasing, value
+probing via predicates) live in ``test_pii_scopes.py``.
 """
 
 from __future__ import annotations
@@ -87,7 +92,7 @@ GROUP BY tier
 
 @pytest.mark.parametrize(
     ("name", "sql"),
-    [("Q1", _Q1), ("Q2", _Q2), ("Q3", _Q3), ("Q4", _Q4)],
+    [("Q2", _Q2), ("Q3", _Q3), ("Q4", _Q4)],
 )
 def test_positive_cases_pass_static(sql_guard: SqlGuard, name: str, sql: str) -> None:
     decision = sql_guard.evaluate_static(sql)
@@ -96,6 +101,45 @@ def test_positive_cases_pass_static(sql_guard: SqlGuard, name: str, sql: str) ->
     )
     # Static check should leave us in CONFIRM (awaiting cost data).
     assert decision.outcome is GuardOutcome.CONFIRM
+
+
+@pytest.mark.parametrize("mode", ["reference", "project"])
+def test_q1_identity_resolution_is_denied(
+    pii_denylist: object,
+    allowed_tables: object,
+    mode: str,
+) -> None:
+    """Q1 was a positive case until 0.2.0. It is now denied in *both* modes.
+
+    Q1 normalises PII inside a CTE (``LOWER(TRIM(email)) AS email_norm``) and
+    projects only ``COUNTIF`` aggregates, so outermost-only checking saw
+    nothing but counts. Two independent reasons it must now fail:
+
+    * ``pii_mode="project"``: the CTE scope projects ``email`` and ``mobile``.
+      Checking every scope is what stops an alias laundering a denied column,
+      and this query is indistinguishable from that attack at parse time.
+    * ``pii_mode="reference"``: the aggregates reference the normalised
+      columns. ``COUNTIF(email_norm = 'target@example.com')`` is precisely the
+      value-probing oracle reference mode exists to close — an aggregate over
+      a denied column still answers questions about individual values.
+
+    Callers who need this pattern should normalise PII in a warehouse view the
+    guard's denylist does not cover, and point the agent at the view.
+    """
+    from sql_guard import PiiDenylist, SqlGuardConfig
+
+    assert isinstance(pii_denylist, PiiDenylist)
+    guard = SqlGuard(
+        SqlGuardConfig.from_settings(
+            pii_denylist=pii_denylist,
+            allowed_tables=[],
+            pii_mode=mode,  # type: ignore[arg-type]
+            enforce_allowed_tables=False,
+        ),
+    )
+    decision = guard.evaluate_static(_Q1)
+    assert decision.outcome is GuardOutcome.DENY
+    assert any("email" in c.lower() for c in decision.pii_columns)
 
 
 # ---------------------------------------------------------------------------
@@ -167,11 +211,12 @@ def test_select_count_star_is_allowed(sql_guard: SqlGuard) -> None:
     assert decision.outcome is not GuardOutcome.DENY
 
 
-def test_pii_in_subquery_where_is_allowed(sql_guard: SqlGuard) -> None:
-    """A scalar-returning subquery that *consumes* PII in WHERE is fine.
+def test_pii_in_subquery_where_is_allowed_in_project_mode(project_mode_guard: SqlGuard) -> None:
+    """A scalar-returning subquery that *consumes* PII in WHERE.
 
-    The subquery emits a count, not the PII value. The guard must not flag
-    email referenced inside the subquery's WHERE clause.
+    The subquery emits a count, not the PII value, so ``pii_mode="project"``
+    permits it. Under the default ``"reference"`` mode this same query is
+    denied — see :func:`test_pii_in_subquery_where_is_denied_in_reference_mode`.
     """
     sql = """
     SELECT
@@ -182,8 +227,25 @@ def test_pii_in_subquery_where_is_allowed(sql_guard: SqlGuard) -> None:
        WHERE email IS NOT NULL AND ARRAY_LENGTH(platform_b_emails) > 0
       ) AS platform_b_count
     """
-    decision = sql_guard.evaluate_static(sql)
+    decision = project_mode_guard.evaluate_static(sql)
     assert decision.outcome is not GuardOutcome.DENY, decision.reason
+
+
+def test_pii_in_subquery_where_is_denied_in_reference_mode(sql_guard: SqlGuard) -> None:
+    """The same subquery-WHERE pattern is denied under the default mode.
+
+    ``COUNT(*) ... WHERE email IS NOT NULL`` leaks one bit per query, and the
+    predicate can be narrowed (``WHERE email LIKE 'a%'``) to walk a value out.
+    """
+    sql = """
+    SELECT
+      (SELECT COUNT(*) FROM `example-project.analytics.identity`
+       WHERE email IS NOT NULL
+      ) AS c
+    """
+    decision = sql_guard.evaluate_static(sql)
+    assert decision.outcome is GuardOutcome.DENY
+    assert any("email" in c.lower() for c in decision.pii_columns)
 
 
 def test_pii_actually_projected_by_subquery_is_denied(sql_guard: SqlGuard) -> None:
@@ -194,16 +256,29 @@ def test_pii_actually_projected_by_subquery_is_denied(sql_guard: SqlGuard) -> No
     assert any("email" in c.lower() for c in decision.pii_columns)
 
 
-def test_pii_in_where_of_outer_query_is_allowed(sql_guard: SqlGuard) -> None:
-    """Using PII in a WHERE filter while projecting non-PII columns is fine."""
-    sql = (
-        "SELECT uid, COUNT(*) AS n "
-        "FROM `example-project.analytics.identity` "
-        "WHERE email IS NOT NULL "
-        "GROUP BY uid"
-    )
-    decision = sql_guard.evaluate_static(sql)
+_PII_IN_WHERE = (
+    "SELECT uid, COUNT(*) AS n "
+    "FROM `example-project.analytics.identity` "
+    "WHERE email IS NOT NULL "
+    "GROUP BY uid"
+)
+
+
+def test_pii_in_where_is_allowed_in_project_mode(project_mode_guard: SqlGuard) -> None:
+    """Filtering on PII while projecting non-PII is permitted under "project"."""
+    decision = project_mode_guard.evaluate_static(_PII_IN_WHERE)
     assert decision.outcome is not GuardOutcome.DENY, decision.reason
+
+
+def test_pii_in_where_is_denied_in_reference_mode(sql_guard: SqlGuard) -> None:
+    """...and denied under the default "reference" mode, which is the point.
+
+    A denied column in a WHERE clause is a value oracle even though it is
+    never projected.
+    """
+    decision = sql_guard.evaluate_static(_PII_IN_WHERE)
+    assert decision.outcome is GuardOutcome.DENY
+    assert any("email" in c.lower() for c in decision.pii_columns)
 
 
 # ---------------------------------------------------------------------------
