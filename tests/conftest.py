@@ -55,10 +55,30 @@ def allowed_tables() -> frozenset[str]:
 
 @pytest.fixture
 def sql_guard(pii_denylist: PiiDenylist, allowed_tables: frozenset[str]) -> SqlGuard:
+    """Guard with default settings — i.e. ``pii_mode="reference"``."""
     return SqlGuard(
         SqlGuardConfig.from_settings(
             pii_denylist=pii_denylist,
             allowed_tables=allowed_tables,
+            max_cost_usd_auto=0.10,
+            max_cost_usd_hard=20.00,
+            max_bytes_billed=10 * 1024**3,
+        ),
+    )
+
+
+@pytest.fixture
+def project_mode_guard(pii_denylist: PiiDenylist, allowed_tables: frozenset[str]) -> SqlGuard:
+    """Guard with the looser ``pii_mode="project"`` policy.
+
+    Denylisted columns may appear in predicates; only projections are denied.
+    Used to pin the behaviour of the documented loosening path.
+    """
+    return SqlGuard(
+        SqlGuardConfig.from_settings(
+            pii_denylist=pii_denylist,
+            allowed_tables=allowed_tables,
+            pii_mode="project",
             max_cost_usd_auto=0.10,
             max_cost_usd_hard=20.00,
             max_bytes_billed=10 * 1024**3,
