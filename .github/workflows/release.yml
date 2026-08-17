@@ -35,7 +35,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/sql-guard
+      url: https://test.pypi.org/p/agent-sql-guard
     permissions:
       id-token: write
     steps:
@@ -52,7 +52,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     environment:
       name: pypi
-      url: https://pypi.org/p/sql-guard
+      url: https://pypi.org/p/agent-sql-guard
     permissions:
       id-token: write
     steps:

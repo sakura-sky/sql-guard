@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] — 2026-08-17
 
+**Renamed on PyPI to `agent-sql-guard`.** The unqualified name `sql-guard` was
+already taken by an unrelated data-quality package, so 0.1.x was never actually
+published; this is the first release to reach PyPI. Install with:
+
+```bash
+pip install agent-sql-guard
+```
+
+**The import is unchanged** — still `from sql_guard import ...`. Only the
+dependency spec moves:
+
+```toml
+# before (never resolved to this project)
+"sql-guard>=0.1.1"
+# after
+"agent-sql-guard>=0.2.0"
+```
+
+The GitHub repository, module and all APIs keep the `sql_guard` name.
+
 Security release. Closes eight PII-denylist bypasses: two found by adversarial
 review of a deployed agent, and six more found while fixing those. Every one
 was confirmed against 0.1.1 with a reproducing query before being fixed, and

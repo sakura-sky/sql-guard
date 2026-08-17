@@ -240,10 +240,19 @@ SqlGuardConfig.from_settings(..., cost_model=FlatRateCost(usd_per_byte=1e-9))
 ## Install
 
 ```bash
-pip install sql-guard            # core: only depends on sqlglot
-pip install 'sql-guard[adk]'     # + Google ADK + BigQuery client for the
-                                 #   FunctionTool integration
+pip install agent-sql-guard            # core: only depends on sqlglot
+pip install 'agent-sql-guard[adk]'     # + Google ADK + BigQuery client for the
+                                       #   FunctionTool integration
 ```
+
+The distribution is `agent-sql-guard`; the import is `sql_guard`:
+
+```python
+from sql_guard import SqlGuard, SqlGuardConfig
+```
+
+The unqualified name `sql-guard` on PyPI is an unrelated data-quality package
+by another author.
 
 Python 3.11+ supported.
 

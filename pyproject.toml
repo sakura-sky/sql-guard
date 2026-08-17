@@ -1,5 +1,5 @@
 [project]
-name = "sql-guard"
+name = "agent-sql-guard"
 version = "0.2.0"
 description = "Deterministic policy engine for LLM-generated SQL: SELECT-only, PII column denylist, table allowlist, cost cap. Multi-dialect via sqlglot (BigQuery, Snowflake, Postgres, Trino, …)."
 readme = "README.md"
